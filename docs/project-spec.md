@@ -58,7 +58,7 @@ Prove two capabilities most demo voice bots skip:
 | Drop simulation | Both: (1) kill/restart agent process, (2) client-side WebRTC reconnect | (1) is the core "crash recovery" flex and demos cleanly on camera; (2) is closer to a real dropped call |
 | Local dev environment | WSL2 | LiveKit tooling/audio libs assume Linux; avoids Windows-specific dependency friction |
 
-See [technical-requirements.md](technical-requirements.md) for architecture detail and open design questions.
+See [TRD.md](TRD.md) for full architecture, state machine, data model, and the build-ready technical design.
 
 ## 6. Milestones (timeline, padded for first-time LiveKit/WebRTC use)
 
