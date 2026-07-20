@@ -3,6 +3,14 @@ name = "holdline"
 version = "0.1.0"
 description = "Negotiation-turn collections voice agent — orchestration-layer demo"
 requires-python = ">=3.9"
+dependencies = [
+    "livekit-agents>=1.6",
+    "livekit-plugins-deepgram>=1.6",
+    "livekit-plugins-cartesia>=1.6",
+    "livekit-plugins-silero>=1.6",
+    "livekit-api>=1.2",
+    "python-dotenv>=1.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

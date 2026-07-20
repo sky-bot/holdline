@@ -8,7 +8,7 @@ I built a small collections voice agent focused on the two things that break in 
 
 ## Status
 
-Early build. The dependency-free orchestration core is implemented and unit-tested; the LiveKit/STT/TTS/LLM integration and instrumentation are next.
+Early build. The dependency-free orchestration core is implemented and unit-tested, and the real-time audio pipeline (LiveKit + Deepgram STT + Cartesia TTS) is validated end to end. Wiring the FSM into the pipeline, then the barge-in/recovery instrumentation, are next.
 
 - `agent/` — orchestration logic (pure, no external services yet):
   - `fsm.py` — the explicit state machine (states, transitions, branch routing)
@@ -17,11 +17,15 @@ Early build. The dependency-free orchestration core is implemented and unit-test
   - `classify.py` — keyword classification with precedence + LLM-fallback hook
   - `models.py`, `config.py` — shared types and fixed constants
 - `db/schema.sql` — Postgres schema (call state, transitions, latency/recovery events)
+- `scripts/` — dev tooling:
+  - `check_livekit.py` — LiveKit credential smoke test (authenticates, prints no secrets)
+  - `spike_pipeline.py` — minimal STT/TTS round-trip agent (proven-working pipeline reference)
 
 ## Development
 
-Requires Python 3.9+.
+Requires Python 3.9+. The real-time agent runtime targets Linux (WSL2 on Windows) — the pure core and tests run anywhere.
 
+**Run the tests (no external services needed):**
 ```bash
 python -m venv .venv
 # Windows: .venv/Scripts/python -m pip install -e ".[dev]"
@@ -29,4 +33,10 @@ python -m venv .venv
 python -m pytest
 ```
 
-Copy `.env.example` to `.env` for the runtime integration (gitignored — never commit real keys).
+**Run the agent / spikes (needs credentials):**
+```bash
+pip install -e .                       # installs the LiveKit + plugin runtime deps
+cp .env.example .env                   # then fill in the keys (gitignored — never commit real keys)
+python scripts/check_livekit.py        # smoke-test the LiveKit credentials
+python scripts/spike_pipeline.py console   # talk to the STT/TTS pipeline locally
+```
