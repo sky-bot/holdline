@@ -8,7 +8,7 @@ I built a small collections voice agent focused on the two things that break in 
 
 ## Status
 
-Early build. The dependency-free orchestration core is implemented and unit-tested, and the real-time audio pipeline (LiveKit + Deepgram STT + Cartesia TTS) is validated end to end. Wiring the FSM into the pipeline, then the barge-in/recovery instrumentation, are next.
+Early build. The dependency-free orchestration core is implemented and unit-tested; the real-time audio pipeline (LiveKit + Deepgram STT + Cartesia TTS) is validated end to end; and a headless harness can capture the agent's audio and detect when it goes silent — the two riskiest unknowns are cleared. Wiring the FSM into the pipeline, then the barge-in/recovery instrumentation, are next.
 
 - `agent/` — orchestration logic (pure, no external services yet):
   - `fsm.py` — the explicit state machine (states, transitions, branch routing)
@@ -20,6 +20,7 @@ Early build. The dependency-free orchestration core is implemented and unit-test
 - `scripts/` — dev tooling:
   - `check_livekit.py` — LiveKit credential smoke test (authenticates, prints no secrets)
   - `spike_pipeline.py` — minimal STT/TTS round-trip agent (proven-working pipeline reference)
+- `harness/caller_client.py` — headless measurement client: joins a room, subscribes to the agent's audio, and detects audio start/stop on a single clock (the foundation of the end-to-end barge-in number)
 
 ## Development
 
