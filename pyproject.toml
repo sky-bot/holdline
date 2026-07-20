@@ -1,0 +1,13 @@
+[project]
+name = "holdline"
+version = "0.1.0"
+description = "Negotiation-turn collections voice agent — orchestration-layer demo"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
