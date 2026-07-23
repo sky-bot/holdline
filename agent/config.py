@@ -14,9 +14,13 @@ from decimal import Decimal
 BALANCE: Decimal = Decimal("482.17")
 
 # --- Negotiation bounds (TRD §4.3, §6.4) ---
-# HANDLING_OBJECTION exits by this many caller turns: negotiable branches must
-# have proposed an offer, DISPUTE must have escalated. Never "no resolution".
-MAX_HANDLING_TURNS: int = 2
+# HANDLING_OBJECTION is entered by speaking one clarifying question (its canonical
+# prompt); the caller's answer to it is the single in-branch turn, after which
+# negotiable branches propose an offer and DISPUTE escalates. So the branch exits
+# after this many caller turns = 1. (Counted as caller utterances, this matches
+# the TRD's "within 2 turns" framing, which counts agent responses: the clarifying
+# question is agent-turn 1, the offer is agent-turn 2.) Never "no resolution".
+MAX_HANDLING_TURNS: int = 1
 
 DEFAULT_INSTALLMENTS: int = 2
 DEFAULT_FIRST_DUE_DAYS: int = 7

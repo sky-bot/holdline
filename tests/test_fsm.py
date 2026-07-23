@@ -58,14 +58,14 @@ def test_barge_in_during_opening_collapses_into_classification():
 
 
 @pytest.mark.parametrize("branch", [Branch.CANT_PAY_FULL, Branch.WANTS_LATER])
-def test_negotiable_asks_once_then_offers(branch):
+def test_negotiable_offers_after_one_turn(branch):
+    # The clarifying question is spoken on entering HANDLING_OBJECTION; the
+    # caller's answer (this single turn) triggers the offer (MAX_HANDLING_TURNS=1).
     cs = CallState(current_state=State.HANDLING_OBJECTION, branch=branch, turn_count=0)
-    t1 = advance(cs, ObjectionTurn())
-    assert t1.to_state == State.HANDLING_OBJECTION  # clarifying question, stays
-    assert t1.call_state.turn_count == 1
-    t2 = advance(t1.call_state, ObjectionTurn())
-    assert t2.to_state == State.OFFER_PROPOSED       # offer by turn 2
-    assert t2.call_state.offer is not None
+    t = advance(cs, ObjectionTurn())
+    assert t.to_state == State.OFFER_PROPOSED
+    assert t.call_state.offer is not None
+    assert t.call_state.turn_count == 1
 
 
 def test_negotiable_never_escalates_from_indecision():
@@ -81,13 +81,12 @@ def test_negotiable_never_escalates_from_indecision():
 
 
 def test_dispute_collects_detail_then_escalates():
+    # DISPUTE asks its clarifying question on entry; the caller's answer (this
+    # turn) is captured and the call escalates with that detail attached.
     cs = CallState(current_state=State.HANDLING_OBJECTION, branch=Branch.DISPUTE, turn_count=0)
-    t1 = advance(cs, ObjectionTurn(detail="I never opened this account"))
-    assert t1.to_state == State.HANDLING_OBJECTION
-    assert t1.call_state.notes["dispute_reason"] == "I never opened this account"
-    t2 = advance(t1.call_state, ObjectionTurn(detail="the amount is wrong too"))
-    assert t2.to_state == State.ESCALATED
-    assert "amount is wrong" in t2.call_state.notes["dispute_reason"]
+    t = advance(cs, ObjectionTurn(detail="I never opened this account"))
+    assert t.to_state == State.ESCALATED
+    assert t.call_state.notes["dispute_reason"] == "I never opened this account"
 
 
 # --- OFFER_PROPOSED exits, no counteroffer loop (TRD §4.4) ---
