@@ -26,7 +26,7 @@ from livekit import api, rtc
 
 load_dotenv(".env")
 
-ROOM = "holdline-spike2"
+ROOM = os.getenv("HARNESS_ROOM", "holdline-spike2")
 RMS_THRESHOLD = 300.0   # int16 RMS above this counts as audible speech
 SILENCE_HANG_S = 0.40   # declare STOP after this much continuous silence
 MAX_RUN_S = 30.0        # overall timeout

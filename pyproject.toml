@@ -10,6 +10,7 @@ dependencies = [
     "livekit-plugins-silero>=1.6",
     "livekit-api>=1.2",
     "python-dotenv>=1.0",
+    "asyncpg>=0.30",
 ]
 
 [project.optional-dependencies]
