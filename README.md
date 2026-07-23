@@ -8,9 +8,10 @@ I built a small collections voice agent focused on the two things that break in 
 
 ## Status
 
-Early build. The dependency-free orchestration core is implemented and unit-tested; the real-time audio pipeline (LiveKit + Deepgram STT + Cartesia TTS) is validated end to end; and a headless harness can capture the agent's audio and detect when it goes silent — the two riskiest unknowns are cleared. Wiring the FSM into the pipeline, then the barge-in/recovery instrumentation, are next.
+Early build. The **FSM-driven agent runs a full call end to end** — a live caller negotiated a payment plan and the state machine drove every transition (STT → classify → FSM → offer → prompt → TTS). Underneath: the orchestration core is unit-tested, the real-time pipeline (LiveKit + Deepgram STT + Cartesia TTS) is validated, and a headless harness can detect the agent's audio start/stop. Next: LLM paraphrasing of the prompts, then Postgres persistence + crash recovery, then barge-in instrumentation.
 
-- `agent/` — orchestration logic (pure, no external services yet):
+- `agent/` — the orchestration layer:
+  - `main.py` — the FSM-driven agent: LiveKit pipeline in, `fsm.py` drives the conversation, prompts spoken directly (no LLM yet), state held in memory
   - `fsm.py` — the explicit state machine (states, transitions, branch routing)
   - `offer.py` — deterministic offer computation (terms decided in code, not by the LLM)
   - `prompts.py` — canonical, re-derivable prompts (enables exact resume)
