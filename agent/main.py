@@ -1,17 +1,20 @@
-"""FSM-driven collections agent (TRD §4, §6, §9).
+"""FSM-driven collections agent (TRD §4, §6, §8, §9).
 
-The conversation is driven by the explicit state machine in `agent/fsm.py`, not
-by an LLM. The LiveKit Agents SDK supplies the real-time pipeline (Deepgram STT,
+The conversation is driven by the explicit state machine in `agent/fsm.py`, not by
+an LLM. The LiveKit Agents SDK supplies the real-time pipeline (Deepgram STT,
 Cartesia TTS, Silero VAD, turn detection); every completed caller turn is routed
-through `classify.py` + `fsm.py`, and the agent speaks the canonical prompt for
-the resulting state (`prompts.py`).
+through `classify.py` + `fsm.py`, and the agent speaks the canonical prompt for the
+resulting state (`prompts.py`).
 
-This first version speaks the canonical prompts **directly** — no LLM paraphrasing
-yet. That layer (which needs `ANTHROPIC_API_KEY`) wraps `prompts.py` later without
-changing the control flow here. Call state is held in memory; Postgres persistence
-and crash recovery come in a later step.
+Persistence + recovery (TRD §8): if `DATABASE_URL` is set, every transition is
+written synchronously to Postgres, and on (re)joining a room the agent resumes any
+non-terminal call from its exact persisted state. Without `DATABASE_URL` the agent
+runs in memory (no recovery) — handy for pipeline demos that don't need it.
 
-Run (from repo root, inside the venv) — as a module, so the `agent` package imports resolve:
+No LLM yet — prompts are spoken directly; the paraphrasing layer wraps `prompts.py`
+later without changing this control flow.
+
+Run (from repo root, inside the venv) as a module:
     python -m agent.main console    # talk to it locally
     python -m agent.main dev        # worker + a browser client
 """
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from dotenv import load_dotenv
 from livekit import agents
@@ -35,26 +39,65 @@ from agent.fsm import (
     advance,
 )
 from agent.models import CallState, State
+from agent.persistence import Persistence
 
 load_dotenv(".env")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("holdline")
 
-_TERMINAL_OUTCOMES = (State.PAYMENT_SCHEDULED, State.ESCALATED)
+_OUTCOME_STATES = (State.PAYMENT_SCHEDULED, State.ESCALATED)
+
+# One persistence pool per worker process, created lazily on first use.
+_persistence: Persistence | None = None
+_persistence_lock = asyncio.Lock()
+
+
+async def get_persistence() -> Persistence | None:
+    """Return the shared Persistence, or None if DATABASE_URL isn't configured."""
+    global _persistence
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        return None
+    async with _persistence_lock:
+        if _persistence is None:
+            _persistence = await Persistence.connect(dsn)
+    return _persistence
 
 
 class CollectionsAgent(Agent):
-    """Drives one call through the FSM. The SDK handles audio; we handle flow."""
+    """Drives one call through the FSM. The SDK handles audio; we handle flow + persistence."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        persist: Persistence | None = None,
+        call_id=None,
+        generation: int = 1,
+        resume_state: CallState | None = None,
+    ) -> None:
         super().__init__(instructions="Scripted collections agent; conversation flow is code-driven.")
-        self.cs = CallState()  # starts at OPENING
+        self.persist = persist
+        self.call_id = call_id
+        self.generation = generation
+        self.cs = resume_state or CallState()  # OPENING for a new call
+        self._resuming = resume_state is not None
+        self._fenced = False  # set if a newer process took over this call (TRD §8.2)
         self._lock = asyncio.Lock()  # serialize FSM transitions (barge-in can race on_enter)
 
-    def _apply(self, event) -> None:
+    async def _apply(self, event) -> None:
+        """Advance the FSM and persist the transition synchronously (TRD §8.1)."""
         t = advance(self.cs, event)
         log.info("FSM %s --%s--> %s", t.from_state.value, t.event, t.to_state.value)
         self.cs = t.call_state
+
+        if self.persist is not None and self.call_id is not None:
+            ok = await self.persist.persist_transition(self.call_id, self.generation, t)
+            if not ok:
+                # A newer generation has claimed this call — stop writing and speaking.
+                self._fenced = True
+                log.warning("fenced out by a newer process; this agent will stop responding")
+                return
+            if self.cs.current_state in _OUTCOME_STATES:
+                await self.persist.set_outcome(self.call_id, self.cs.current_state.value.lower())
 
     async def _say_current(self) -> None:
         """Speak the canonical prompt for the current state, if it has one."""
@@ -65,12 +108,20 @@ class CollectionsAgent(Agent):
         await self.session.say(line)
 
     async def on_enter(self) -> None:
-        # Speak the opening statement, then advance to LISTENING — unless a
-        # barge-in already moved us past OPENING while it was playing.
+        if self._resuming:
+            # Recovery: re-deliver the persisted state's prompt exactly (TRD §4.7, §8.2).
+            log.info("resuming call at state=%s", self.cs.current_state.value)
+            if self.persist is not None and self.call_id is not None:
+                await self.persist.log_resume(self.call_id, self.cs.current_state)
+            await self._say_current()
+            return
+
+        # New call: speak the opening, then advance to LISTENING — unless a barge-in
+        # already moved us past OPENING while it was playing.
         await self._say_current()  # OPENING line
         async with self._lock:
             if self.cs.current_state == State.OPENING:
-                self._apply(OpeningComplete())
+                await self._apply(OpeningComplete())
 
     def _event_for(self, transcript: str):
         """Map a caller utterance to the FSM event valid for the current state."""
@@ -86,10 +137,8 @@ class CollectionsAgent(Agent):
         return None
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
-        if self.cs.current_state == State.CALL_ENDED:
-            # The call is over — ignore any trailing speech instead of falling
-            # into the clarify-fallback forever.
-            raise StopResponse()
+        if self._fenced or self.cs.current_state == State.CALL_ENDED:
+            raise StopResponse()  # call is over or superseded — ignore trailing speech
 
         transcript = (getattr(new_message, "text_content", None) or "").strip()
         log.info("caller turn %r in state=%s", transcript, self.cs.current_state.value)
@@ -97,18 +146,19 @@ class CollectionsAgent(Agent):
         async with self._lock:
             event = self._event_for(transcript)
             if event is None:
-                # Couldn't classify — ask the caller to clarify and stay put.
                 await self.session.say("Sorry, I didn't catch that — could you say it again?")
                 raise StopResponse()
-            self._apply(event)
+            await self._apply(event)
+            if self._fenced:
+                raise StopResponse()
 
         await self._say_current()  # speak the resulting state's line (question / offer / wrap-up)
 
         # A terminal outcome's line IS its wrap-up; after speaking it, close the call.
         async with self._lock:
-            if self.cs.current_state in _TERMINAL_OUTCOMES:
-                self._apply(WrapUp())  # -> CALL_ENDED
-                log.info("call ended (branch=%s, outcome persisted in memory)", self.cs.branch)
+            if self.cs.current_state in _OUTCOME_STATES:
+                await self._apply(WrapUp())  # -> CALL_ENDED
+                log.info("call ended (branch=%s)", self.cs.branch)
 
         raise StopResponse()  # this turn is fully handled; no LLM generation
 
@@ -117,16 +167,35 @@ def prewarm(proc: agents.JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load()
 
 
+async def _build_agent(room_name: str) -> CollectionsAgent:
+    """Resume an in-progress call for this room, or start a fresh one (TRD §8.2)."""
+    persist = await get_persistence()
+    if persist is None:
+        log.info("no DATABASE_URL set — running without persistence (no recovery)")
+        return CollectionsAgent()
+
+    active = await persist.find_active_call(room_name)
+    if active is not None:
+        gen = await persist.bump_generation(active.call_id)  # fence: claim the call
+        log.info("resuming call %s at %s (generation %d)", active.call_id, active.call_state.current_state.value, gen)
+        return CollectionsAgent(persist, active.call_id, gen, resume_state=active.call_state)
+
+    fresh = await persist.create_call(room_name)
+    log.info("new call %s", fresh.call_id)
+    return CollectionsAgent(persist, fresh.call_id, fresh.generation)
+
+
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     log.info("agent connected to room %r", ctx.room.name)
+    agent = await _build_agent(ctx.room.name)
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
         stt=deepgram.STT(model="nova-3"),
         tts=cartesia.TTS(),
         # no llm: the FSM drives the conversation
     )
-    await session.start(agent=CollectionsAgent(), room=ctx.room)
+    await session.start(agent=agent, room=ctx.room)
 
 
 if __name__ == "__main__":
