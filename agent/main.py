@@ -30,6 +30,7 @@ from livekit.agents import Agent, AgentSession, JobContext, StopResponse, Worker
 from livekit.plugins import cartesia, deepgram, silero
 
 from agent import classify, prompts
+from agent.config import BARGE_IN_CONFIRM_MS
 from agent.fsm import (
     BranchClassified,
     ObjectionTurn,
@@ -194,6 +195,24 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=deepgram.STT(model="nova-3"),
         tts=cartesia.TTS(),
         # no llm: the FSM drives the conversation
+        #
+        # Barge-in tuning for low latency (TRD §7.1). Two SDK defaults otherwise
+        # dominate the number:
+        #  - aec_warmup_duration (default 3.0s) disables interruptions at call
+        #    start to calibrate echo cancellation. Our WebRTC path has no acoustic
+        #    echo (no shared speaker/mic), so we skip it.
+        #  - the "adaptive" interruption detector is a LiveKit Cloud inference call
+        #    (~0.4s round-trip) that trades latency for fewer false interruptions.
+        #    "vad" mode decides locally on voice activity — far lower latency.
+        aec_warmup_duration=0.0,
+        turn_handling={
+            "interruption": {
+                "enabled": True,
+                "mode": "vad",
+                "min_duration": BARGE_IN_CONFIRM_MS / 1000.0,  # short voiced-onset gate
+                "min_words": 0,  # react to speech, not transcribed words (off the STT path)
+            },
+        },
     )
     await session.start(agent=agent, room=ctx.room)
 
