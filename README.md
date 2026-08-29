@@ -18,10 +18,11 @@ Both proven live, plus a full FSM-driven negotiation call (STT → classify → 
 ## Layout
 
 - `agent/` — the orchestration layer:
-  - `main.py` — the FSM-driven agent: LiveKit pipeline in, `fsm.py` drives the conversation; persists every transition and resumes on restart when `DATABASE_URL` is set; barge-in tuned for low latency (`aec_warmup_duration=0`, local VAD interruption)
+  - `main.py` — the FSM-driven agent: LiveKit pipeline in, `fsm.py` drives the conversation; persists every transition and resumes on restart when `DATABASE_URL` is set; barge-in tuned for low latency (`aec_warmup_duration=0`, local VAD interruption); hangs up after the wrap-up line
   - `fsm.py` — the explicit state machine (states, transitions, branch routing)
   - `offer.py` — deterministic offer computation (terms decided in code, not by the LLM)
   - `prompts.py` — canonical, re-derivable prompts (enables exact resume)
+  - `paraphrase.py` — Claude Haiku rewords the canonical line for tone (never the numbers); no-ops without `ANTHROPIC_API_KEY`
   - `classify.py` — keyword classification with precedence + LLM-fallback hook
   - `persistence.py` — synchronous Postgres writes + recovery lookup + generation fencing (TRD §8)
   - `models.py`, `config.py` — shared types and fixed constants

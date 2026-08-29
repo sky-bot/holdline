@@ -29,7 +29,7 @@ from livekit import agents
 from livekit.agents import Agent, AgentSession, JobContext, StopResponse, WorkerOptions
 from livekit.plugins import cartesia, deepgram, silero
 
-from agent import classify, prompts
+from agent import classify, paraphrase, prompts
 from agent.config import BARGE_IN_CONFIRM_MS
 from agent.fsm import (
     BranchClassified,
@@ -101,12 +101,22 @@ class CollectionsAgent(Agent):
                 await self.persist.set_outcome(self.call_id, self.cs.current_state.value.lower())
 
     async def _say_current(self) -> None:
-        """Speak the canonical prompt for the current state, if it has one."""
+        """Speak the current state's prompt, LLM-paraphrased for tone if available."""
         try:
             line = prompts.canonical_prompt(self.cs)
         except ValueError:
             return  # silent states (e.g. LISTENING) have no line
-        await self.session.say(line)
+        # The FSM/offer.py decide the content and numbers; the LLM only rewords it
+        # (falls back to the canonical line without ANTHROPIC_API_KEY).
+        await self.session.say(await paraphrase.paraphrase(line))
+
+    async def _hang_up(self) -> None:
+        """Leave the room a few seconds after the wrap-up line, ending the call."""
+        await asyncio.sleep(5.0)  # let the terminal line finish playing out
+        try:
+            await self.session.aclose()
+        except Exception:  # noqa: BLE001 - best-effort hang-up
+            pass
 
     async def on_enter(self) -> None:
         if self._resuming:
@@ -160,6 +170,7 @@ class CollectionsAgent(Agent):
             if self.cs.current_state in _OUTCOME_STATES:
                 await self._apply(WrapUp())  # -> CALL_ENDED
                 log.info("call ended (branch=%s)", self.cs.branch)
+                asyncio.create_task(self._hang_up())  # leave the room after the wrap-up
 
         raise StopResponse()  # this turn is fully handled; no LLM generation
 
